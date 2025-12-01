@@ -1,10 +1,27 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
+
+// Load environment variables from .env.local
+const envPath = path.join(__dirname, '..', '.env.local');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf-8');
+  envContent.split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const [key, ...values] = trimmed.split('=');
+      if (key && values.length > 0) {
+        process.env[key.trim()] = values.join('=').trim();
+      }
+    }
+  });
+}
 
 // Default admin credentials from environment variables or defaults
 const DEFAULT_ADMIN = {
-  username: process.env.ADMIN_USERNAME,
-  password: process.env.ADMIN_PASSWORD,
+  username: process.env.ADMIN_USERNAME || 'admin',
+  password: process.env.ADMIN_PASSWORD || 'admin123',
 };
 
 const UserSchema = new mongoose.Schema({

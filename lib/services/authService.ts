@@ -1,5 +1,6 @@
 import { connect } from "../mongoose";
 import { User } from "../models/User";
+import bcrypt from "bcryptjs";
 
 export async function findUserByUsername(username: string) {
   await connect();
@@ -31,8 +32,9 @@ export async function verifyCredentials(username: string, password: string) {
   const user = await findUserByUsername(username);
   if (!user) return null;
   
-  // Simple password comparison (in production, use bcrypt)
-  if (user.password === password) {
+  // Compare hashed password using bcrypt
+  const isValid = await bcrypt.compare(password, user.password);
+  if (isValid) {
     const { password: _, ...userWithoutPassword } = user;
     return userWithoutPassword;
   }
