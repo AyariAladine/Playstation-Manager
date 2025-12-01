@@ -7,7 +7,10 @@ import { Player } from "../../../../../lib/models/Player";
 
 function calcPrice(pricingType: string, priceValue: number, minutes: number) {
   if (pricingType === "perGame") return priceValue;
-  const intervals = Math.max(1, Math.ceil(minutes / 15));
+  // Add 2-minute grace period: only charge for intervals after 17:00, 32:00, etc.
+  // Subtract 2 minutes before calculating intervals
+  const adjustedMinutes = Math.max(0, minutes - 2);
+  const intervals = Math.max(1, Math.ceil(adjustedMinutes / 15));
   return intervals * priceValue;
 }
 
@@ -25,7 +28,20 @@ export async function POST(req: Request, { params }: any) {
     const minutes = Math.max(1, Math.ceil((endTime.getTime() - startTime.getTime()) / (1000 * 60)));
     const game = await Game.findById(ps.currentGame);
     if (!game) return NextResponse.json({ error: "Game not found" }, { status: 404 });
-    const totalPrice = calcPrice(game.pricingType, game.priceValue, minutes);
+    
+    // Calculate price based on prepaid sessions or actual time (whichever is greater)
+    let totalPrice;
+    if (ps.prepaidSessions && ps.prepaidSessions > 1) {
+      // Use prepaid sessions for pricing
+      const prepaidPrice = game.pricingType === 'perGame' 
+        ? game.priceValue * ps.prepaidSessions 
+        : game.priceValue * ps.prepaidSessions;
+      const calculatedPrice = calcPrice(game.pricingType, game.priceValue, minutes);
+      // Charge whichever is greater (prepaid or actual time)
+      totalPrice = Math.max(prepaidPrice, calculatedPrice);
+    } else {
+      totalPrice = calcPrice(game.pricingType, game.priceValue, minutes);
+    }
 
     const session = new Session({
       playStation: ps._id,

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "../components/Sidebar";
@@ -19,12 +19,19 @@ export const metadata: Metadata = {
   title: "PlayStation Shop Admin",
   description: "Manage consoles, players, games, and sessions",
   manifest: "/manifest.json",
-  themeColor: "#2D1B69",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "PS Shop",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  themeColor: "#2D1B69",
 };
 
 export default async function RootLayout({
@@ -39,9 +46,7 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
         <link rel="manifest" href="/manifest.json?v=4" />
-        <meta name="theme-color" content="#2D1B69" />
         <link rel="icon" type="image/x-icon" href="/favicon.ico" />
         <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />

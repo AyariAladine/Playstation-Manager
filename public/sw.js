@@ -1,4 +1,4 @@
-const CACHE_NAME = 'playstation-shop-v1';
+const CACHE_NAME = 'playstation-shop-v2';
 const urlsToCache = [
   '/',
   '/dashboard',
@@ -39,33 +39,58 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch event - network first for HTML, cache first for assets
 self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    caches.match(event.request).then((response) => {
-      // Cache hit - return response
-      if (response) {
-        return response;
-      }
+  const { request } = event;
+  const url = new URL(request.url);
 
-      return fetch(event.request).then((response) => {
-        // Check if valid response
-        if (!response || response.status !== 200 || response.type !== 'basic') {
+  // Network-first strategy for HTML pages and API calls
+  if (request.method === 'GET' && (
+    request.headers.get('accept')?.includes('text/html') ||
+    url.pathname.startsWith('/api/')
+  )) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          // Clone and cache the fresh response
+          if (response && response.status === 200) {
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, responseToCache);
+            });
+          }
           return response;
+        })
+        .catch(() => {
+          // If network fails, try cache as fallback
+          return caches.match(request).then((cachedResponse) => {
+            return cachedResponse || caches.match('/dashboard');
+          });
+        })
+    );
+  } else {
+    // Cache-first strategy for static assets (CSS, JS, images)
+    event.respondWith(
+      caches.match(request).then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
 
-        // Clone the response
-        const responseToCache = response.clone();
+        return fetch(request).then((response) => {
+          if (!response || response.status !== 200 || response.type !== 'basic') {
+            return response;
+          }
 
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, responseToCache);
+          });
+
+          return response;
+        }).catch(() => {
+          return caches.match('/dashboard');
         });
-
-        return response;
-      }).catch(() => {
-        // Return offline page or cached data
-        return caches.match('/dashboard');
-      });
-    })
-  );
+      })
+    );
+  }
 });

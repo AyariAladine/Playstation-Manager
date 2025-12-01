@@ -10,6 +10,7 @@ const PlayStationSchema = new Schema(
     currentPlayer: { type: Schema.Types.ObjectId, ref: "Player", required: false },
     currentGame: { type: Schema.Types.ObjectId, ref: "Game", required: false },
     startTime: { type: Date, required: false },
+    prepaidSessions: { type: Number, default: 1 },
   },
   { timestamps: true }
 );
@@ -24,4 +25,5 @@ export type PlayStationType = {
   currentPlayer?: string;
   currentGame?: string;
   startTime?: string | Date;
+  prepaidSessions?: number;
 };

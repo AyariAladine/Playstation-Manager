@@ -10,6 +10,7 @@ type PlayStation = {
   currentPlayer?: any;
   currentGame?: any;
   startTime?: string;
+  prepaidSessions?: number;
 };
 
 type Player = { _id: string; name: string };
@@ -21,7 +22,7 @@ export default function PlayStationsPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [form, setForm] = useState({ name: "", model: "" });
   const [editing, setEditing] = useState<string | null>(null);
-  const [startData, setStartData] = useState<{ psId: string; playerId: string; gameId: string } | null>(null);
+  const [startData, setStartData] = useState<{ psId: string; playerId: string; gameId: string; prepaidSessions: number } | null>(null);
   const [processing, setProcessing] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -30,6 +31,7 @@ export default function PlayStationsPage() {
   const [showPlayerDropdown, setShowPlayerDropdown] = useState(false);
   const [showGameDropdown, setShowGameDropdown] = useState(false);
   const [notifiedSessions, setNotifiedSessions] = useState<Set<string>>(new Set());
+  const [cancelConfirm, setCancelConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -38,6 +40,13 @@ export default function PlayStationsPage() {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
+
+    // Set up periodic data refresh to keep checking even when tab is inactive
+    const dataRefreshInterval = setInterval(() => {
+      loadData();
+    }, 5000); // Refresh data every 5 seconds
+
+    return () => clearInterval(dataRefreshInterval);
   }, []);
 
   useEffect(() => {
@@ -57,55 +66,109 @@ export default function PlayStationsPage() {
   }, []);
 
   useEffect(() => {
-    // Update current time every second for real-time timer
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
+    // Update current time every second for real-time timer and check notifications
+    // Use both setInterval and requestAnimationFrame to work even when tab is inactive
+    let animationFrameId: number;
+    let lastCheck = Date.now();
+    
+    const checkNotifications = () => {
+      const now = Date.now();
+      setCurrentTime(now);
       
-      // Check for 15-minute intervals and send notifications
-      playstations.forEach((ps) => {
-        if (ps.status === "occupied" && ps.startTime && ps.currentGame) {
-          const game = games.find(g => g._id === ps.currentGame._id || g._id === ps.currentGame);
-          
-          // Only notify for games with per15min pricing
-          if (game && game.pricingType === 'per15min') {
-            const start = new Date(ps.startTime).getTime();
-            const elapsedMinutes = Math.floor((Date.now() - start) / (1000 * 60));
+      // Only check notifications if at least 1 second has passed
+      if (now - lastCheck >= 1000) {
+        lastCheck = now;
+        
+        // Check each occupied console for notification triggers
+        playstations.forEach((ps) => {
+          if (ps.status === "occupied" && ps.startTime && ps.currentGame) {
+            const game = games.find(g => g._id === ps.currentGame._id || g._id === ps.currentGame);
             
-            // Check if we've hit a 15-minute interval (15, 30, 45, 60...)
-            if (elapsedMinutes > 0 && elapsedMinutes % 15 === 0) {
-              const notificationKey = `${ps._id}-${elapsedMinutes}`;
+            // Only notify for games with per15min pricing
+            if (game && game.pricingType === 'per15min') {
+              const start = new Date(ps.startTime).getTime();
+              const elapsedMinutes = Math.floor((now - start) / (1000 * 60));
               
-              // Only notify once per interval
-              if (!notifiedSessions.has(notificationKey)) {
-                setNotifiedSessions(prev => new Set(prev).add(notificationKey));
+              // Calculate when to notify based on prepaid sessions
+              const prepaidSessions = ps.prepaidSessions || 1;
+              const prepaidMinutes = prepaidSessions * 15;
+              
+              // Notify at prepaid completion
+              if (elapsedMinutes === prepaidMinutes) {
+                const notificationKey = `${ps._id}-${elapsedMinutes}`;
                 
-                // Send desktop notification
-                if ('Notification' in window && Notification.permission === 'granted') {
-                  const playerName = ps.currentPlayer?.name || 'Player';
-                  const gameName = ps.currentGame?.title || game.title;
-                  const hours = Math.floor(elapsedMinutes / 60);
-                  const mins = elapsedMinutes % 60;
-                  const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                if (!notifiedSessions.has(notificationKey)) {
+                  setNotifiedSessions(prev => new Set(prev).add(notificationKey));
                   
-                  new Notification('⏰ 15-Minute Interval!', {
-                    body: `${ps.name}: ${playerName} playing ${gameName}\nTime: ${timeStr}`,
-                    icon: game.image || '/favicon.ico',
-                    tag: notificationKey,
-                    requireInteraction: true,
-                  });
+                  // Send desktop notification
+                  if ('Notification' in window && Notification.permission === 'granted') {
+                    const playerName = ps.currentPlayer?.name || 'Player';
+                    const gameName = ps.currentGame?.title || game.title;
+                    const hours = Math.floor(elapsedMinutes / 60);
+                    const mins = elapsedMinutes % 60;
+                    const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                    
+                    new Notification('⏰ Prepaid Time Complete!', {
+                      body: `${ps.name}: ${playerName} playing ${gameName}\nTime: ${timeStr} (${prepaidSessions} session${prepaidSessions > 1 ? 's' : ''})`,
+                      icon: game.image || '/favicon.ico',
+                      tag: notificationKey,
+                      requireInteraction: true,
+                    });
+                    
+                    // Play notification sound
+                    const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSiF0fPTgjMGHm7A7+OZUQ4NUrDn77NeHAU7k9n0y4IuBSh+zO/glEQMGmm96eaoVxQKRqDf8sFuIQUnhM/z1oU0Bh5tv+3mnFMPDlOw5/C1YhwFOpPZ9MyBLgUofszu4pdGDBtqvOnnq1kVCkag3/LAbiEFJ4TO89aFNQYebbzt5p1UDw5TsOjwtWQcBTmT2fTNgS8FKH7M7+KWSQwcarzo56xZFQlFn9/ywG4hBSaEzvPWhTQGHm297OafUw8NU6/n8LVkGwU5k9n0zYEvBSh+y+7jl0kNG2q86OeuWhQKRZ/f8r9vIAUmhc7z1YU0Bh1tve3mn1MPDVS/6O+1YxwFOJLZ9M2CMQYpgMzv45dKDBxrve3nrVkVCkWf3/K/cCAEJoXO89aFNAYebb7s5Z9UDgxTr+fwtWMcBTeS2fPNgjIGKYDM8OKXTQ0ba7zt56tZFQpFnt/yv24gBCWEzvTWhjQGHWy+7eSfVA0MUq/n8LRiHAU3ktnzzYIyBil/zO/jmE0NG2u87eaqWhQKRZ7f8r5vIAQlhc711oY0Bh1tu+zkoFQODFKv6O+zYRsFN5HY88yBMQYof8vv4pZKDBpqvO3lrFoVCUSe3vK9byAEJYXN89eFMwYcbLvs5KFUDQxSruiwtGEbBTaR2PPMgjEGKH7L7+OXSgwaa7vs5KpcFApDnt7xvW4fBCSEzfPWhTMHG2y77OOgVQ0MUK/n77RhGwU2kNjzzIIwBSh+y+/hmEoMGWq77OWrWRQJRJ3e8rxuHwQkhM3z1oU0Bhxrve3jnlQNCk+v5++zYRoENI/Y88uCMQUpfsrv4pdKDBppu+vlqloVCkOd3vG8bh4DJIPm8deENQcaa73s5J5VDQ1Pr+fvsmAbBDOP2PPLgjIGKn/J8OOXSwwZaLzs5apaFQpDnd3xv24eBCOCzPLWhzQGG2u+7eOeVAwNTq/m77BhGgUzj9jzy4IyByl/yO7imEsNGWe87OWqWhQJQp3d8L1tHgQjgsz01oY0Bhpqvuzin1UNDEyv5u6wYRoFMo/Y8st/MAQnfsjt4phKCxdmvOvkqVoUCUKc3fC9bR0EI4HN9NWGNQYaab7r4Z9UDAxMrefurF8ZBDGe2e/JgjMGKYDH7t+VSwwYZ7vo5KtbFQlBm93xwG4dAx9+zPDWiDYIHWu87OChVgwLTLDn7KxgGQQyn9ruyoQzBSmAyezem0sNGGe76eWrWhQJQpze88FuHwMffsrv1Yc0Bxxqvu3hoFYMC0uu6OysXxgFM5/a78qFNAYsgMfs4Z1LDRlnuunlrFsVCkGc3/LBbx8DHH7I7daHNQccar3t46BWDAk=');
+                    audio.play().catch(() => {});
+                  }
+                }
+              }
+              
+              // Notify every 15 minutes for overtime
+              if (elapsedMinutes > prepaidMinutes && (elapsedMinutes - prepaidMinutes) % 15 === 0) {
+                const notificationKey = `${ps._id}-${elapsedMinutes}`;
+                
+                if (!notifiedSessions.has(notificationKey)) {
+                  setNotifiedSessions(prev => new Set(prev).add(notificationKey));
                   
-                  // Play notification sound
-                  const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSiF0fPTgjMGHm7A7+OZUQ4NUrDn77NeHAU7k9n0y4IuBSh+zO/glEQMGmm96eaoVxQKRqDf8sFuIQUnhM/z1oU0Bh5tv+3mnFMPDlOw5/C1YhwFOpPZ9MyBLgUofszu4pdGDBtqvOnnq1kVCkag3/LAbiEFJ4TO89aFNQYebbzt5p1UDw5TsOjwtWQcBTmT2fTNgS8FKH7M7+KWSQwcarzo56xZFQlFn9/ywG4hBSaEzvPWhTQGHm297OafUw8NU6/n8LVkGwU5k9n0zYEvBSh+y+7jl0kNG2q86OeuWhQKRZ/f8r9vIAUmhc7z1YU0Bh1tve3mn1MPDVS/6O+1YxwFOJLZ9M2CMQYpgMzv45dKDBxrve3nrVkVCkWf3/K/cCAEJoXO89aFNAYebb7s5Z9UDgxTr+fwtWMcBTeS2fPNgjIGKYDM8OKXTQ0ba7zt56tZFQpFnt/yv24gBCWEzvTWhjQGHWy+7eSfVA0MUq/n8LRiHAU3ktnzzYIyBil/zO/jmE0NG2u87eaqWhQKRZ7f8r5vIAQlhc711oY0Bh1tu+zkoFQODFKv6O+zYRsFN5HY88yBMQYof8vv4pZKDBpqvO3lrFoVCUSe3vK9byAEJYXN89eFMwYcbLvs5KFUDQxSruiwtGEbBTaR2PPMgjEGKH7L7+OXSgwaa7vs5KpcFApDnt7xvW4fBCSEzfPWhTMHG2y77OOgVQ0MUK/n77RhGwU2kNjzzIIwBSh+y+/hmEoMGWq77OWrWRQJRJ3e8rxuHwQkhM3z1oU0Bhxrve3jnlQNCk+v5++zYRoENI/Y88uCMQUpfsrv4pdKDBppu+vlqloVCkOd3vG8bh4DJIPm8deENQcaa73s5J5VDQ1Pr+fvsmAbBDOP2PPLgjIGKn/J8OOXSwwZaLzs5apaFQpDnd3xv24eBCOCzPLWhzQGG2u+7eOeVAwNTq/m77BhGgUzj9jzy4IyByl/yO7imEsNGWe87OWqWhQJQp3d8L1tHgQjgsz01oY0Bhpqvuzin1UNDEyv5u6wYRoFMo/Y8st/MAQnfsjt4phKCxdmvOvkqVoUCUKc3fC9bR0EI4HN9NWGNQYaab7r4Z9UDAxMrefurF8ZBDGe2e/JgjMGKYDH7t+VSwwYZ7vo5KtbFQlBm93xwG4dAx9+zPDWiDYIHWu87OChVgwLTLDn7KxgGQQyn9ruyoQzBSmAyezem0sNGGe76eWrWhQJQpze88FuHwMffsrv1Yc0Bxxqvu3hoFYMC0uu6OysXxgFM5/a78qFNAYsgMfs4Z1LDRlnuunlrFsVCkGc3/LBbx8DHH7I7daHNQccar3t46BWDAk=');
-                  audio.play().catch(() => {});
+                  if ('Notification' in window && Notification.permission === 'granted') {
+                    const playerName = ps.currentPlayer?.name || 'Player';
+                    const gameName = ps.currentGame?.title || game.title;
+                    const hours = Math.floor(elapsedMinutes / 60);
+                    const mins = elapsedMinutes % 60;
+                    const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                    const overtimeIntervals = Math.floor((elapsedMinutes - prepaidMinutes) / 15);
+                    
+                    new Notification('⏰ Overtime Alert!', {
+                      body: `${ps.name}: ${playerName} - ${gameName}\nTime: ${timeStr} (+${overtimeIntervals} extra session${overtimeIntervals > 1 ? 's' : ''})`,
+                      icon: game.image || '/favicon.ico',
+                      tag: notificationKey,
+                      requireInteraction: true,
+                    });
+                    
+                    const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSiF0fPTgjMGHm7A7+OZUQ4NUrDn77NeHAU7k9n0y4IuBSh+zO/glEQMGmm96eaoVxQKRqDf8sFuIQUnhM/z1oU0Bh5tv+3mnFMPDlOw5/C1YhwFOpPZ9MyBLgUofszu4pdGDBtqvOnnq1kVCkag3/LAbiEFJ4TO89aFNQYebbzt5p1UDw5TsOjwtWQcBTmT2fTNgS8FKH7M7+KWSQwcarzo56xZFQlFn9/ywG4hBSaEzvPWhTQGHm297OafUw8NU6/n8LVkGwU5k9n0zYEvBSh+y+7jl0kNG2q86OeuWhQKRZ/f8r9vIAUmhc7z1YU0Bh1tve3mn1MPDVS/6O+1YxwFOJLZ9M2CMQYpgMzv45dKDBxrve3nrVkVCkWf3/K/cCAEJoXO89aFNAYebb7s5Z9UDgxTr+fwtWMcBTeS2fPNgjIGKYDM8OKXTQ0ba7zt56tZFQpFnt/yv24gBCWEzvTWhjQGHWy+7eSfVA0MUq/n8LRiHAU3ktnzzYIyBil/zO/jmE0NG2u87eaqWhQKRZ7f8r5vIAQlhc711oY0Bh1tu+zkoFQODFKv6O+zYRsFN5HY88yBMQYof8vv4pZKDBpqvO3lrFoVCUSe3vK9byAEJYXN89eFMwYcbLvs5KFUDQxSruiwtGEbBTaR2PPMgjEGKH7L7+OXSgwaa7vs5KpcFApDnt7xvW4fBCSEzfPWhTMHG2y77OOgVQ0MUK/n77RhGwU2kNjzzIIwBSh+y+/hmEoMGWq77OWrWRQJRJ3e8rxuHwQkhM3z1oU0Bhxrve3jnlQNCk+v5++zYRoENI/Y88uCMQUpfsrv4pdKDBppu+vlqloVCkOd3vG8bh4DJIPm8deENQcaa73s5J5VDQ1Pr+fvsmAbBDOP2PPLgjIGKn/J8OOXSwwZaLzs5apaFQpDnd3xv24eBCOCzPLWhzQGG2u+7eOeVAwNTq/m77BhGgUzj9jzy4IyByl/yO7imEsNGWe87OWqWhQJQp3d8L1tHgQjgsz01oY0Bhpqvuzin1UNDEyv5u6wYRoFMo/Y8st/MAQnfsjt4phKCxdmvOvkqVoUCUKc3fC9bR0EI4HN9NWGNQYaab7r4Z9UDAxMrefurF8ZBDGe2e/JgjMGKYDH7t+VSwwYZ7vo5KtbFQlBm93xwG4dAx9+zPDWiDYIHWu87OChVgwLTLDn7KxgGQQyn9ruyoQzBSmAyezem0sNGGe76eWrWhQJQpze88FuHwMffsrv1Yc0Bxxqvu3hoFYMC0uu6OysXxgFM5/a78qFNAYsgMfs4Z1LDRlnuunlrFsVCkGc3/LBbx8DHH7I7daHNQccar3t46BWDAk=');
+                    audio.play().catch(() => {});
+                  }
                 }
               }
             }
           }
-        }
-      });
+        });
+      }
+      
+      animationFrameId = requestAnimationFrame(checkNotifications);
+    };
+    
+    // Start the animation frame loop
+    animationFrameId = requestAnimationFrame(checkNotifications);
+    
+    // Also use setInterval as backup (runs even when tab is backgrounded in some browsers)
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      cancelAnimationFrame(animationFrameId);
+    };
   }, [playstations, games, notifiedSessions]);
 
   async function loadData() {
@@ -158,6 +221,7 @@ export default function PlayStationsPage() {
       await axios.post(`/api/playstations/${startData.psId}/start`, {
         playerId: startData.playerId,
         gameId: startData.gameId,
+        prepaidSessions: startData.prepaidSessions,
       });
       setStartData(null);
       loadData();
@@ -171,6 +235,18 @@ export default function PlayStationsPage() {
     setProcessing(psId);
     try {
       await axios.post(`/api/playstations/${psId}/stop`);
+      loadData();
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  async function handleCancel(psId: string) {
+    if (processing) return;
+    setProcessing(psId);
+    try {
+      await axios.post(`/api/playstations/${psId}/cancel`);
+      setCancelConfirm(null);
       loadData();
     } finally {
       setProcessing(null);
@@ -259,7 +335,7 @@ export default function PlayStationsPage() {
               {ps.status === "available" ? (
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setStartData({ psId: ps._id, playerId: "", gameId: "" })}
+                    onClick={() => setStartData({ psId: ps._id, playerId: "", gameId: "", prepaidSessions: 1 })}
                     className="flex-1 bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 font-bold shadow-lg"
                   >
                     ▶ START
@@ -278,13 +354,22 @@ export default function PlayStationsPage() {
                   </button>
                 </div>
               ) : (
-                <button 
-                  onClick={() => handleStop(ps._id)} 
-                  disabled={processing === ps._id}
-                  className="w-full bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 font-bold shadow-lg disabled:bg-gray-600 disabled:cursor-not-allowed"
-                >
-                  {processing === ps._id ? "⏳ Stopping..." : "⏹ STOP SESSION"}
-                </button>
+                <div className="space-y-2">
+                  <button 
+                    onClick={() => handleStop(ps._id)} 
+                    disabled={processing === ps._id}
+                    className="w-full bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 font-bold shadow-lg disabled:bg-gray-600 disabled:cursor-not-allowed"
+                  >
+                    {processing === ps._id ? "⏳ Stopping..." : "⏹ STOP SESSION"}
+                  </button>
+                  <button 
+                    onClick={() => setCancelConfirm(ps._id)} 
+                    disabled={processing === ps._id}
+                    className="w-full bg-orange-600 text-white py-2 rounded-lg hover:bg-orange-700 font-semibold disabled:bg-gray-600 disabled:cursor-not-allowed"
+                  >
+                    ❌ CANCEL (No Charge)
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -437,6 +522,20 @@ export default function PlayStationsPage() {
                   )}
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Prepaid Sessions *</label>
+                <select
+                  value={startData.prepaidSessions}
+                  onChange={(e) => setStartData({ ...startData, prepaidSessions: parseInt(e.target.value) })}
+                  className="border border-gray-300 p-3 w-full rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-gray-900"
+                >
+                  <option value={1}>1 Session</option>
+                  <option value={2}>2 Sessions</option>
+                  <option value={3}>3 Sessions</option>
+                  <option value={4}>4 Sessions</option>
+                  <option value={5}>5 Sessions</option>
+                </select>
+              </div>
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={handleStart}
@@ -456,6 +555,38 @@ export default function PlayStationsPage() {
                   className="px-6 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 font-semibold"
                 >
                   Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Confirmation Modal */}
+      {cancelConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="bg-linear-to-r from-orange-600 to-red-600 p-6 rounded-t-xl">
+              <h2 className="text-2xl font-bold text-white">⚠️ Cancel Session</h2>
+            </div>
+            <div className="p-6">
+              <p className="text-gray-700 text-lg mb-6">
+                Are you sure you want to cancel this session? No charges will be applied to the customer.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handleCancel(cancelConfirm)}
+                  disabled={!!processing}
+                  className="flex-1 bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 font-bold disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {processing ? "⏳ Cancelling..." : "Yes, Cancel Session"}
+                </button>
+                <button
+                  onClick={() => setCancelConfirm(null)}
+                  disabled={!!processing}
+                  className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 font-semibold disabled:opacity-50"
+                >
+                  No, Keep Session
                 </button>
               </div>
             </div>
